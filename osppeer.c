@@ -764,23 +764,34 @@ int main(int argc, char *argv[])
     int status;
     for (; argc > 1; argc--, argv++)
         if ((t = start_download(tracker_task, argv[1]))) {
-            pid = fork();
-            if (pid == -1) {
+            if ((pid = fork()) == -1) {
+
                 die("Error forking\n");
+
             } else if (pid == 0) {
+
                 task_download(t, tracker_task);
                 _exit(0);
+
             } 
         } 
 
-    // Then accept connections from other peers and upload files to them!
     while ((t = task_listen(listen_task))) {
-        pid = fork();
-        if (pid == -1) {
+        if ((pid = fork())  == -1) {
+
             die("Error forking\n");
+
         } else if (pid == 0) {
+
+            printf("Parent's upload task t->peer_fd: %d\n", t->peer_fd);
+            // Child needs to close listening socket 
+            close(listen_task->peer_fd);
             task_upload(t);
             _exit(0);
+
+        } else {
+            // Parent needs to close accepted socket
+            close(t->peer_fd);
         }
     }
 
