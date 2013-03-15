@@ -283,11 +283,13 @@ int open_socket(struct in_addr addr, int port)
 //  finds a terminator line.  It returns the number of characters in the
 //  data portion.  It also terminates this client if the tracker's response
 //  is formatted badly.  (This code trusts the tracker.)
-static size_t read_tracker_response(task_t *t)
+static size_t read_tracker_response(task_t *t, size_t left_over_size)
 {
     char *s;
     size_t split_pos = (size_t) -1, pos = 0;
     t->head = t->tail = 0;
+    if (left_over_size)
+        t->tail = left_over_size;
 
     while (1) {
         // Check for whether buffer is complete.
@@ -306,7 +308,7 @@ static size_t read_tracker_response(task_t *t)
                     return split_pos;
                 }
             }
-        printf("read_track_response t->head: %d t->tail: %d\n", t->head, t->tail);
+        //printf("read_track_response t->head: %d t->tail: %d\n", t->head, t->tail);
 
         // If not, read more data.  Note that the read will not block
         // unless NO data is available.
@@ -345,7 +347,7 @@ task_t *start_tracker(struct in_addr addr, int port)
     }
 
     // Collect the tracker's greeting.
-    messagepos = read_tracker_response(tracker_task);
+    messagepos = read_tracker_response(tracker_task, 0);
     message("* Tracker's greeting:\n%s", &tracker_task->buf[messagepos]);
 
     return tracker_task;
@@ -400,7 +402,7 @@ static void register_files(task_t *tracker_task, const char *myalias)
     // Register address with the tracker.
     osp2p_writef(tracker_task->peer_fd, "ADDR %s %I:%d\n",
              myalias, listen_addr, listen_port);
-    messagepos = read_tracker_response(tracker_task);
+    messagepos = read_tracker_response(tracker_task, 0);
     message("* Tracker's response to our IP address registration:\n%s",
         &tracker_task->buf[messagepos]);
     if (tracker_task->buf[messagepos] != '2') {
@@ -425,7 +427,7 @@ static void register_files(task_t *tracker_task, const char *myalias)
             continue;
 
         osp2p_writef(tracker_task->peer_fd, "HAVE %s\n", ent->d_name);
-        messagepos = read_tracker_response(tracker_task);
+        messagepos = read_tracker_response(tracker_task, 0);
         if (tracker_task->buf[messagepos] != '2')
             error("* Tracker error message while registering '%s':\n%s",
                   ent->d_name, &tracker_task->buf[messagepos]);
@@ -461,6 +463,7 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 {
     char *s1, *s2;
     char *left_over;
+    size_t left_over_size;
     task_t *t = NULL;
     peer_t *p;
     size_t messagepos;
@@ -483,21 +486,28 @@ task_t *start_download(task_t *tracker_task, const char *filename)
     // EXERCISE 2 FIX BUG WHEN make run-popular
     // If many peers on the tracker, then continuously read_tracker_response
     // in building the peer list
-    while ((messagepos = read_tracker_response(tracker_task)) == TASKBUFSIZ) {
+    left_over_size = 0;
+    while ((messagepos = read_tracker_response(tracker_task, left_over_size)) == TASKBUFSIZ) {
+        // If buf contains message portion
+        if (tracker_task->buf[messagepos] == '2') {
+            break;
+        }
         // add peers
         s1 = tracker_task->buf;
+        // If there was left over chars from previous iteration, add that peer
         while ((s2 = (char *) memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) {
+
             if (!(p = parse_peer(s1, s2 - s1)))
                 die("osptracker responded to WANT command with unexpected format!\n");
             p->next = t->peer_list;
             t->peer_list = p;
             s1 = s2 + 1;
+
         }
         // Move what's left in the buffer to the beginning of the buffer
         if (s1 != tracker_task->buf + messagepos) {
-            unsigned int size = (tracker_task->buf + TASKBUFSIZ) - s1;
-            memcpy(tracker_task->buf, s1, size);
-            tracker_task->tail = size;
+            left_over_size = (tracker_task->buf + TASKBUFSIZ) - s1;
+            memcpy(tracker_task->buf, s1, left_over_size);
             //die("osptracker's response to WANT has unexpected format!\n");
         }
     }
@@ -619,7 +629,7 @@ static void task_download(task_t *t, task_t *tracker_task)
         if (strcmp(t->filename, t->disk_filename) == 0) {
             osp2p_writef(tracker_task->peer_fd, "HAVE %s\n",
                      t->filename);
-            (void) read_tracker_response(tracker_task);
+            (void) read_tracker_response(tracker_task, 0);
         }
         task_free(t);
         return;
