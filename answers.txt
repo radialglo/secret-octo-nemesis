@@ -24,12 +24,35 @@ Email: stanley.xu@ucla.edu
 
 # EXERCISE 1: What method you used to make your peer download and upload
 #    files in parallel?  (~1-3 sentences)
+We used fork to run concurrent processes that process downloads and uploads.
+We allow for uploads and downloads to run concurrently. One issue that was
+causing problems was to have the parent/child close the socket connections
+they do not use. 
 
 # EXERCISE 2A: What conditions did you find and fix that would have
 #    triggered a buffer overrun bug?  (~1-3 sentences each)
 
+1. In task_upload, it is possible that the peer request fills up t->buf larger
+than what gets stored in t->filename by osp2p_snscanf. This will cause the
+t->filename buffer to overflow. An attack we saw that exploited this in make
+run-bad was 4000 'x's in a filename. At a high level, we fix this by checking 
+the length of the t->buf.
+
+2. It is possible that a filename requested by download or upload exceeds 
+FILENAMESIZ. The given code uses strcpy, which does not check bounds/sizes.
+To fix this, we do a simple strlen check in functions using strcpy.
+
+
 # EXERCISE 2B: What other robustness problems did you fix?  (~1-3 sentences
 #    each)
+
+1. We fixed the bug where upload requests for files not in the current
+directory succeed. An attack that exploited this was requests for 
+'../GNUMakeFile' and '/etc/passwd'. We fix this by checking the 
+filename and its inode appears in the current directory.
+
+2. There may be a security bug if the request is for a symlink. We do this
+by checking requests are for regular files.
 
 # EXERCISE 3: Describe the attacks you implemented for "evil mode".  Why
 #    are they attacks?  (~3-10 sentences each)

@@ -463,6 +463,12 @@ task_t *start_download(task_t *tracker_task, const char *filename)
     size_t messagepos;
     assert(tracker_task->type == TASK_TRACKER);
 
+    // Check that filename is not too long
+    if (strlen(filename) > FILENAMESIZ) {
+        error("* Error filename is too long\n");
+        goto exit;
+    }
+
     message("* Finding peers for '%s'\n", filename);
 
     osp2p_writef(tracker_task->peer_fd, "WANT %s\n", filename);
@@ -481,7 +487,7 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 
     // add peers
     s1 = tracker_task->buf;
-    while ((s2 = memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) {
+    while ((s2 = (char *) memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) {
         if (!(p = parse_peer(s1, s2 - s1)))
             die("osptracker responded to WANT command with unexpected format!\n");
         p->next = t->peer_list;
@@ -506,6 +512,13 @@ static void task_download(task_t *t, task_t *tracker_task)
     int i, ret = -1;
     assert((!t || t->type == TASK_DOWNLOAD)
            && tracker_task->type == TASK_TRACKER);
+
+    // Check that filename is not too long
+    if (strlen(t->filename) > FILENAMESIZ) {
+        error("* Error filename is too long\n");
+        task_free(t);
+        return;
+    }
 
     // Quit if no peers, and skip this peer
     if (!t || !t->peer_list) {
@@ -634,9 +647,11 @@ static void task_upload(task_t *t)
     DIR *dir;
     struct dirent *ent;
     struct stat s;
+    char *tmp_buf;
     int is_current_directory = 0;//false
 
     assert(t->type == TASK_UPLOAD);
+
     // First, read the request from the peer.
     while (1) {
         int ret = read_to_taskbuf(t->peer_fd, t);
@@ -649,10 +664,37 @@ static void task_upload(task_t *t)
     }
 
     assert(t->head == 0);
+
+    // BUFFER OVERFLOW POSSIBLE HERE
+    // Check that the request does not exceed FILENAMESIZ + 11
+    // t->tail is the size of t->buf
+    // The maximum size for correctness in a download request is the 
+    // length of "GET %s OSP2P\n" --> FILENAMESIZ + 11
+    // Check that the condensed scanned filename length does not exceed FILENAMESIZ.
+    // It is possible that multiple bytes get converted to a single char for a string.
+    // e.g. %2F convers to '/'
+    // We do not assume no special characters allowed 
+    if (t->tail > FILENAMESIZ + 11) {
+        tmp_buf = (char *) malloc(t->tail); 
+        if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", tmp_buf) == 0) {
+
+            if (strlen(tmp_buf) > FILENAMESIZ) {
+                error("* Request for filename '%s' is too long\n", tmp_buf);
+                free(tmp_buf);
+                goto exit;
+            }
+
+        }
+        free(tmp_buf);
+    }
+
+    printf("Requested t->buf length: %d\n", t->tail);
+    message("%s", t->buf);
     if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", t->filename) < 0) {
         error("* Odd request %.*s\n", t->tail, t->buf);
         goto exit;
     }
+    printf("Requested filename length: %d\n", strlen(t->filename));
     t->head = t->tail = 0;
 
     //get the current file stats
@@ -661,30 +703,29 @@ static void task_upload(task_t *t)
     //first check that file is a regular file
     if((s.st_mode & S_IFMT) == S_IFREG) {
 	
-    //then open current directory and check that the file is in current directory
-    //by checking inode numbers
+        //then open current directory and check that the file is in current directory
+        //by checking inode numbers
 
-      if ((dir = opendir(".")) == NULL)
-          die("open directory: %s", strerror(errno));
-      while ((ent = readdir(dir)) != NULL) {
+        if ((dir = opendir(".")) == NULL)
+            die("open directory: %s", strerror(errno));
+        while ((ent = readdir(dir)) != NULL) {
 
-          if(s.st_ino == ent->d_ino) {
-             is_current_directory = 1;//true
-	   }
+            if(s.st_ino == ent->d_ino) {
+                is_current_directory = 1;//true
+            }
 
-      }  
-      closedir(dir);
+        }  
+        closedir(dir);
     }
 
-    if(is_current_directory) {
-        message("* %s is in current directory of peer\n",t->filename);
+    if (is_current_directory) {
+        //message("* '%s' is in current directory of peer\n",t->filename);
         t->disk_fd = open(t->filename, O_RDONLY);
     } else {
-        error("* %s is not in current directory of peer\n",t->filename);
+        error("* '%s' is not in current directory of this peer\n",t->filename);
         goto exit;
     }
 
-    //t->disk_fd = open(t->filename, O_RDONLY);
     if (t->disk_fd == -1) {
         error("* Cannot open file %s", t->filename);
         goto exit;
@@ -847,6 +888,11 @@ int main(int argc, char *argv[])
 
         }
     }
+
+    /*while ((t = task_listen(listen_task))) {
+        printf("Child's upload task t->peer_fd: %d\n", t->peer_fd);
+        task_upload(t);
+    }*/
 
     return 0;
 }
