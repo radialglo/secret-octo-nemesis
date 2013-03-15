@@ -761,7 +761,6 @@ int main(int argc, char *argv[])
 
     // First, download files named on command line.
     pid_t pid;
-    int status;
     for (; argc > 1; argc--, argv++)
         if ((t = start_download(tracker_task, argv[1]))) {
             if ((pid = fork()) == -1) {
@@ -776,26 +775,32 @@ int main(int argc, char *argv[])
             } 
         } 
 
-    while ((t = task_listen(listen_task))) {
-        if ((pid = fork())  == -1) {
+    if ((pid = fork()) == -1) 
+        die("Error forking\n");
+    else if (pid == 0) {
+        while ((t = task_listen(listen_task))) {
+            if ((pid = fork())  == -1) {
 
-            die("Error forking\n");
+                die("Error forking\n");
 
-        } else if (pid == 0) {
+            } else if (pid == 0) {
 
-            printf("Parent's upload task t->peer_fd: %d\n", t->peer_fd);
-            // Child needs to close listening socket 
-            close(listen_task->peer_fd);
-            task_upload(t);
-            _exit(0);
+                printf("Child's upload task t->peer_fd: %d\n", t->peer_fd);
+                // Child needs to close listening socket 
+                close(listen_task->peer_fd);
+                task_upload(t);
+                _exit(0);
 
-        } else {
-            // Parent needs to close accepted socket
-            close(t->peer_fd);
+            } else {
+                // Parent needs to close accepted socket
+                close(t->peer_fd);
+            }
         }
+        _exit(0);
     }
 
     //wait for all processes to complete
+    int status;
     for(;;) {
         int status;
         if (wait(&status) == -1 && errno == ECHILD) {
