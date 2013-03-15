@@ -306,6 +306,7 @@ static size_t read_tracker_response(task_t *t)
                     return split_pos;
                 }
             }
+        printf("read_track_response t->head: %d t->tail: %d\n", t->head, t->tail);
 
         // If not, read more data.  Note that the read will not block
         // unless NO data is available.
@@ -313,7 +314,8 @@ static size_t read_tracker_response(task_t *t)
         if (ret == TBUF_ERROR)
             die("tracker read error");
         else if (ret == TBUF_END)
-            die("tracker connection closed prematurely!\n");
+            //die("tracker connection closed prematurely!\n");
+            return TASKBUFSIZ;
     }
 }
 
@@ -458,6 +460,7 @@ static peer_t *parse_peer(const char *s, size_t len)
 task_t *start_download(task_t *tracker_task, const char *filename)
 {
     char *s1, *s2;
+    char *left_over;
     task_t *t = NULL;
     peer_t *p;
     size_t messagepos;
@@ -472,18 +475,38 @@ task_t *start_download(task_t *tracker_task, const char *filename)
     message("* Finding peers for '%s'\n", filename);
 
     osp2p_writef(tracker_task->peer_fd, "WANT %s\n", filename);
-    messagepos = read_tracker_response(tracker_task);
-    if (tracker_task->buf[messagepos] != '2') {
-        error("* Tracker error message while requesting '%s':\n%s",
-              filename, &tracker_task->buf[messagepos]);
-        goto exit;
-    }
-
     if (!(t = task_new(TASK_DOWNLOAD))) {
         error("* Error while allocating task");
         goto exit;
     }
     strcpy(t->filename, filename);
+    // EXERCISE 2 FIX BUG WHEN make run-popular
+    // If many peers on the tracker, then continuously read_tracker_response
+    // in building the peer list
+    while ((messagepos = read_tracker_response(tracker_task)) == TASKBUFSIZ) {
+        // add peers
+        s1 = tracker_task->buf;
+        while ((s2 = (char *) memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) {
+            if (!(p = parse_peer(s1, s2 - s1)))
+                die("osptracker responded to WANT command with unexpected format!\n");
+            p->next = t->peer_list;
+            t->peer_list = p;
+            s1 = s2 + 1;
+        }
+        // Move what's left in the buffer to the beginning of the buffer
+        if (s1 != tracker_task->buf + messagepos) {
+            unsigned int size = (tracker_task->buf + TASKBUFSIZ) - s1;
+            memcpy(tracker_task->buf, s1, size);
+            tracker_task->tail = size;
+            //die("osptracker's response to WANT has unexpected format!\n");
+        }
+    }
+
+    if (tracker_task->buf[messagepos] != '2') {
+        error("* Tracker error message while requesting '%s':\n%s",
+              filename, &tracker_task->buf[messagepos]);
+        goto exit;
+    }
 
     // add peers
     s1 = tracker_task->buf;
@@ -494,8 +517,10 @@ task_t *start_download(task_t *tracker_task, const char *filename)
         t->peer_list = p;
         s1 = s2 + 1;
     }
-    if (s1 != tracker_task->buf + messagepos)
+
+    if (s1 != tracker_task->buf + messagepos) {
         die("osptracker's response to WANT has unexpected format!\n");
+    }
 
  exit:
     return t;
@@ -677,24 +702,22 @@ static void task_upload(task_t *t)
     if (t->tail > FILENAMESIZ + 11) {
         tmp_buf = (char *) malloc(t->tail); 
         if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", tmp_buf) == 0) {
-
             if (strlen(tmp_buf) > FILENAMESIZ) {
                 error("* Request for filename '%s' is too long\n", tmp_buf);
                 free(tmp_buf);
                 goto exit;
             }
-
+            //message("%s", t->buf);
         }
         free(tmp_buf);
     }
 
-    printf("Requested t->buf length: %d\n", t->tail);
-    message("%s", t->buf);
+    //printf("Requested t->buf length: %d\n", t->tail);
     if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", t->filename) < 0) {
         error("* Odd request %.*s\n", t->tail, t->buf);
         goto exit;
     }
-    printf("Requested filename length: %d\n", strlen(t->filename));
+    //printf("Requested filename length: %d\n", strlen(t->filename));
     t->head = t->tail = 0;
 
     //get the current file stats
@@ -860,7 +883,7 @@ int main(int argc, char *argv[])
 
             } else if (pid == 0) {
 
-                printf("Child's upload task t->peer_fd: %d\n", t->peer_fd);
+                //printf("Child's upload task t->peer_fd: %d\n", t->peer_fd);
                 // Child needs to close listening socket 
                 close(listen_task->peer_fd);
                 task_upload(t);
@@ -890,7 +913,7 @@ int main(int argc, char *argv[])
     }
 
     /*while ((t = task_listen(listen_task))) {
-        printf("Child's upload task t->peer_fd: %d\n", t->peer_fd);
+        //printf("Child's upload task t->peer_fd: %d\n", t->peer_fd);
         task_upload(t);
     }*/
 
