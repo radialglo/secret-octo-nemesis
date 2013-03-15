@@ -673,6 +673,7 @@ static void task_upload(task_t *t)
 	   }
 
       }  
+      closedir(dir);
     }
 
     if(is_current_directory) {
