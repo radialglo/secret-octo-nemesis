@@ -631,6 +631,11 @@ static task_t *task_listen(task_t *listen_task)
 //  the requested file.
 static void task_upload(task_t *t)
 {
+    DIR *dir;
+    struct dirent *ent;
+    struct stat s;
+    int is_current_directory = 0;//false
+
     assert(t->type == TASK_UPLOAD);
     // First, read the request from the peer.
     while (1) {
@@ -650,7 +655,35 @@ static void task_upload(task_t *t)
     }
     t->head = t->tail = 0;
 
-    t->disk_fd = open(t->filename, O_RDONLY);
+    //get the current file stats
+    lstat(t->filename,&s);
+
+    //first check that file is a regular file
+    if((s.st_mode & S_IFMT) == S_IFREG) {
+	
+    //then open current directory and check that the file is in current directory
+    //by checking inode numbers
+
+      if ((dir = opendir(".")) == NULL)
+          die("open directory: %s", strerror(errno));
+      while ((ent = readdir(dir)) != NULL) {
+
+          if(s.st_ino == ent->d_ino) {
+             is_current_directory = 1;//true
+	   }
+
+      }  
+    }
+
+    if(is_current_directory) {
+        message("* %s is in current directory of peer\n",t->filename);
+        t->disk_fd = open(t->filename, O_RDONLY);
+    } else {
+        error("* %s is not in current directory of peer\n",t->filename);
+        goto exit;
+    }
+
+    //t->disk_fd = open(t->filename, O_RDONLY);
     if (t->disk_fd == -1) {
         error("* Cannot open file %s", t->filename);
         goto exit;
