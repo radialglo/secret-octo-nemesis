@@ -39,6 +39,14 @@ static int listen_port;
 #define TASKBUFSIZ  4096    // Size of task_t::buf
 #define FILENAMESIZ 256 // Size of task_t::filename
 
+// 100 MB arbitrary file size limit, we can adjust this as arg to program if 
+// we wanted
+#define MAXFILESIZ 104857600
+
+// Minimum file size after 10 read cycles - to check slow downloads
+#define SLOWFILESIZ 50
+                            
+
 typedef enum tasktype {     // Which type of connection is this?
     TASK_TRACKER,       // => Tracker connection
     TASK_PEER_LISTEN,   // => Listens for upload requests
@@ -164,10 +172,13 @@ taskbufresult_t read_to_taskbuf(int fd, task_t *t)
     unsigned tailpos = (t->tail % TASKBUFSIZ);
     ssize_t amt;
 
+    printf("**read_to_taskbuf start\n");
+
     if (t->head == t->tail || headpos < tailpos)
         amt = read(fd, &t->buf[tailpos], TASKBUFSIZ - tailpos);
     else
         amt = read(fd, &t->buf[tailpos], headpos - tailpos);
+    printf("**read_to_taskbuf ending\n");
 
     if (amt == -1 && (errno == EINTR || errno == EAGAIN
               || errno == EWOULDBLOCK))
@@ -184,7 +195,7 @@ taskbufresult_t read_to_taskbuf(int fd, task_t *t)
 
 
 // write_from_taskbuf(fd, t)
-//  Writes data from 't' into 't->fd' into 't->buf', using similar
+//  Writes data from 't->buf' into 't->fd', using similar
 //  techniques and identical return values as read_to_taskbuf.
 taskbufresult_t write_from_taskbuf(int fd, task_t *t)
 {
@@ -462,7 +473,6 @@ static peer_t *parse_peer(const char *s, size_t len)
 task_t *start_download(task_t *tracker_task, const char *filename)
 {
     char *s1, *s2;
-    char *left_over;
     size_t left_over_size;
     task_t *t = NULL;
     peer_t *p;
@@ -471,7 +481,7 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 
     // Check that filename is not too long
     if (strlen(filename) > FILENAMESIZ) {
-        error("* Error filename is too long\n");
+        error("* Error download filename '%s' is too long\n", filename);
         goto exit;
     }
 
@@ -544,13 +554,13 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 //  until a download is successful.
 static void task_download(task_t *t, task_t *tracker_task)
 {
-    int i, ret = -1;
+    int i, tick = 0;
     assert((!t || t->type == TASK_DOWNLOAD)
            && tracker_task->type == TASK_TRACKER);
 
     // Check that filename is not too long
     if (strlen(t->filename) > FILENAMESIZ) {
-        error("* Error filename is too long\n");
+        error("* Error download filename '%s' is too long\n", t->filename);
         task_free(t);
         return;
     }
@@ -617,6 +627,17 @@ static void task_download(task_t *t, task_t *tracker_task)
         if (ret == TBUF_ERROR) {
             error("* Disk write error");
             goto try_again;
+        }
+        // Test that bad peer is taking up all our disk space 
+        if (t->total_written > MAXFILESIZ) { 
+            error("* Error - file size exceeds 100 MB for '%s'\n", t->filename);
+            return;
+        }
+        // Test that bad peer is uploading to us too slow
+        ++tick; // Tick to make sure the download is not purposefully slow
+        if (tick > 10 && t->total_written < SLOWFILESIZ) {
+            error("* Error - download of file '%s' is too slow, terminating download\n", t->filename);
+            return;
         }
     }
 
@@ -690,6 +711,7 @@ static void task_upload(task_t *t)
     // First, read the request from the peer.
     while (1) {
         int ret = read_to_taskbuf(t->peer_fd, t);
+        printf("**task_upload, reading request from peer\n");
         if (ret == TBUF_ERROR) {
             error("* Cannot read from connection");
             goto exit;
@@ -713,7 +735,7 @@ static void task_upload(task_t *t)
         tmp_buf = (char *) malloc(t->tail); 
         if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", tmp_buf) == 0) {
             if (strlen(tmp_buf) > FILENAMESIZ) {
-                error("* Request for filename '%s' is too long\n", tmp_buf);
+                error("* Request with filename '%s' is too long\n", tmp_buf);
                 free(tmp_buf);
                 goto exit;
             }
@@ -921,11 +943,6 @@ int main(int argc, char *argv[])
 
         }
     }
-
-    /*while ((t = task_listen(listen_task))) {
-        //printf("Child's upload task t->peer_fd: %d\n", t->peer_fd);
-        task_upload(t);
-    }*/
 
     return 0;
 }

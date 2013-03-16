@@ -54,6 +54,17 @@ filename and its inode appears in the current directory.
 2. There may be a security bug if the request is for a symlink. We do this
 by checking requests are for regular files.
 
+3. The peer may hog up resources by filling up our peer's disk. We fix this
+by limiting download size to 100MB (see #define MAXFILESIZ).
+
+4. The bad peer may take very long to upload (4 bytes every 10 seconds). 
+We fix this by checking whether the peer is uploading 4 bytes at a time 
+and just taking up too much time (10 buf reads and < 50 bytes), 
+in which case we terminate the download.
+
+5. The bad peer will download from us (we upload) but when we call
+read_to_taskbuf to get the request, the read call will hang forever.
+
 # EXERCISE 3: Describe the attacks you implemented for "evil mode".  Why
 #    are they attacks?  (~3-10 sentences each)
 
