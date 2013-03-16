@@ -83,7 +83,8 @@ of t->filename into other memory.
 
 2. We executed a denial of service attack by sending infinite bytes to other
 downloaders, monopolizing their disk space. When a downloader requests for a
-file, we just infinitely write to their peer_fd 4096 bytes at a time. Because the 
+file, we just infinitely write to their peer_fd 4096 bytes at a time in 
+write_from_taskbuf. Because the 
 skeleton code doesn't check if the file size is too large, it will just 
 keep writing to its local file until disk space is no more. This is an attack
 because it denies them resources (disk space) as well as other peers from connecting to

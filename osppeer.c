@@ -598,7 +598,7 @@ static void task_download(task_t *t, task_t *tracker_task)
     // should cause a buffer overrun when then scanf from t->buf into t->filename!
     if (evil_mode) {
         int i;
-        printf("Evil attack - overrun filename\n");
+        //printf("Evil attack - overrun filename\n");
         evil_filename = (char *) malloc (4001 * sizeof(char)); 
         evil_filename[0] = '\0';
         for (i = 0; i < 80; ++i) {
@@ -606,7 +606,7 @@ static void task_download(task_t *t, task_t *tracker_task)
         }
         evil_filename[4000] = '\0';
         osp2p_writef(t->peer_fd, "GET %s OSP2P\n", evil_filename);
-        printf("evil_filename: %s\n", evil_filename);
+        //printf("evil_filename: %s\n", evil_filename);
         //free(evil_filename);
         //task_free(t);
         //printf("returning\n");
@@ -659,7 +659,7 @@ static void task_download(task_t *t, task_t *tracker_task)
         }
         // Test that bad peer is taking up all our disk space 
         if (t->total_written > MAXFILESIZ) { 
-            error("* Error - file size exceeds 100 MB for '%s'\n", t->filename);
+            error("* Error - file size exceeds 100 MB for '%s'\n", t->disk_filename);
             return;
         }
         // Test that bad peer is uploading to us too slow
